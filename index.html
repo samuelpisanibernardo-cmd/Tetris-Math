@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tetris Matemático - Fix Definitivo</title>
+  <style>
+    body {
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #game-container {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+    }
+
+    #board {
+      border: 2px solid #475569;
+      background: #000;
+    }
+
+    #info {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    #next-piece {
+      width: 160px;
+      height: 140px;
+      background: #000;
+      border: 2px solid #475569;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      text-align: center;
+      padding: 8px;
+      box-sizing: border-box;
+    }
+
+    #next-equation, #next-solution {
+      font-size: 14px;
+      margin: 4px 0;
+      font-weight: bold;
+    }
+
+    #score, #level, #lines {
+      font-size: 1.3em;
+      background: #1e293b;
+      padding: 8px 16px;
+      border-radius: 6px;
+    }
+
+    #game-over {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(15, 23, 42, 0.95);
+      padding: 20px;
+      border-radius: 12px;
+      text-align: center;
+      display: none;
+      z-index: 10;
+      border: 2px solid #334155;
+    }
+
+    button {
+      background: #334155;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      margin-top: 10px;
+      cursor: pointer;
+      font-family: inherit;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧮 TETRIS MATEMÁTICO (9º Ano)</h1>
+  <div id="game-container">
+    <canvas id="board" width="240" height="400"></canvas>
+    <div id="info">
+      <div id="score">Pontos: 0</div>
+      <div id="level">Nível: 1</div>
+      <div id="lines">Linhas: 0</div>
+      <div id="next-piece">
+        <div>Próxima:</div>
+        <canvas id="next-canvas" width="80" height="50"></canvas>
+        <div id="next-equation">x + 1 = 2</div>
+        <div id="next-solution">x = 1</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="game-over">
+    <h2>🎮 FIM DE JOGO</h2>
+    <p id="final-score">Pontos: 0</p>
+    <button onclick="startGame()">Jogar Novamente</button>
+  </div>
+
+  <script>
+    const COLS = 10;
+    const ROWS = 20;
+    const BLOCK_SIZE = 20;
+
+    const EQUATIONS = [
+      { eq: "x + 1 = 2", sol: 1 },
+      { eq: "x - 1 = 0", sol: 1 },
+      { eq: "2x = 2", sol: 1 },
+      { eq: "x = 1", sol: 1 },
+
+      { eq: "x + 1 = 3", sol: 2 },
+      { eq: "x - 2 = 0", sol: 2 },
+      { eq: "2x = 4", sol: 2 },
+      { eq: "x = 2", sol: 2 },
+
+      { eq: "x + 2 = 5", sol: 3 },
+      { eq: "x - 3 = 0", sol: 3 },
+      { eq: "3x = 9", sol: 3 },
+      { eq: "x = 3", sol: 3 },
+
+      { eq: "x = 4", sol: 4 },
+      { eq: "x - 4 = 0", sol: 4 },
+      { eq: "2x = 8", sol: 4 },
+      { eq: "4x = 16", sol: 4 },
+    ];
+
+    const COLORS = [
+      null,
+      '#FF0D72', // I
+      '#0DC2FF', // J
+      '#0DFF72', // L
+      '#F538FF', // O
+      '#FF8E0D', // S
+      '#FFE138', // T
+      '#3877FF', // Z
+    ];
+
+    const PIECES = {
+      I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+      J: [[1,0,0],[1,1,1],[0,0,0]],
+      L: [[0,0,1],[1,1,1],[0,0,0]],
+      O: [[1,1],[1,1]],
+      S: [[0,1,1],[1,1,0],[0,0,0]],
+      T: [[0,1,0],[1,1,1],[0,0,0]],
+      Z: [[1,1,0],[0,1,1],[0,0,0]]
+    };
+
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const nextCanvas = document.getElementById('next-canvas');
+    const nextCtx = nextCanvas.getContext('2d');
+
+    let board = createBoard();
+    let score = 0;
+    let lines = 0;
+    let level = 1;
+    let gameOver = false;
+    let dropCounter = 0;
+    let dropInterval = 1000;
+    let lastTime = 0;
+    let pieceIdCounter = 0; // ✅ ID único para cada peça
+
+    let player = {
+      pos: { x: 0, y: 0 },
+      matrix: null,
+      piece: null,
+      nextPiece: null,
+      currentEquation: null,
+      nextEquation: null,
+      currentPieceId: null
+    };
+
+    function createBoard() {
+      return Array.from({ length: ROWS }, () => 
+        Array.from({ length: COLS }, () => ({ value: 0, sol: null, pieceId: null }))
+      );
+    }
+
+    function getRandomEquation() {
+      return EQUATIONS[Math.floor(Math.random() * EQUATIONS.length)];
+    }
+
+    function resetPlayer() {
+      const pieceTypes = Object.keys(PIECES);
+      if (!player.nextPiece) {
+        player.nextPiece = pieceTypes[Math.floor(Math.random() * pieceTypes.length)];
+        player.nextEquation = getRandomEquation();
+      }
+
+      player.piece = player.nextPiece;
+      player.currentEquation = player.nextEquation;
+      player.nextPiece = pieceTypes[Math.floor(Math.random() * pieceTypes.length)];
+      player.nextEquation = getRandomEquation();
+
+      player.currentPieceId = ++pieceIdCounter; // ✅ Novo ID único
+      player.matrix = cloneMatrix(PIECES[player.piece]);
+      player.pos.y = 0;
+      player.pos.x = Math.floor(COLS / 2) - Math.floor(player.matrix[0].length / 2);
+
+      drawNextPiece();
+
+      if (checkCollision()) {
+        gameOver = true;
+        document.getElementById('final-score').textContent = `Pontos: ${score}`;
+        document.getElementById('game-over').style.display = 'block';
+      }
+    }
+
+    function cloneMatrix(matrix) {
+      return matrix.map(row => [...row]);
+    }
+
+    function drawMatrix(matrix, offset, color = null, alpha = 1, solution = null) {
+      for (let y = 0; y < matrix.length; y++) {
+        for (let x = 0; x < matrix[y].length; x++) {
+          if (matrix[y][x] !== 0) {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = color || COLORS[Object.keys(PIECES).indexOf(player.piece) + 1];
+            ctx.fillRect(
+              (offset.x + x) * BLOCK_SIZE,
+              (offset.y + y) * BLOCK_SIZE,
+              BLOCK_SIZE,
+              BLOCK_SIZE
+            );
+            ctx.strokeStyle = '#000';
+            ctx.strokeRect(
+              (offset.x + x) * BLOCK_SIZE,
+              (offset.y + y) * BLOCK_SIZE,
+              BLOCK_SIZE,
+              BLOCK_SIZE
+            );
+
+            if (alpha === 1 && solution !== null) {
+              ctx.fillStyle = '#fff';
+              ctx.font = 'bold 10px Arial';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(
+                `x=${solution}`,
+                (offset.x + x + 0.5) * BLOCK_SIZE,
+                (offset.y + y + 0.5) * BLOCK_SIZE
+              );
+            }
+            ctx.restore();
+          }
+        }
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          const cell = board[y][x];
+          if (cell.value !== 0) {
+            ctx.fillStyle = COLORS[cell.value];
+            ctx.fillRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            ctx.strokeStyle = '#000';
+            ctx.strokeRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`x=${cell.sol}`, x * BLOCK_SIZE + 10, y * BLOCK_SIZE + 10);
+          }
+        }
+      }
+
+      const ghostY = getGhostY();
+      drawMatrix(player.matrix, { x: player.pos.x, y: ghostY }, null, 0.2);
+      drawMatrix(player.matrix, player.pos, null, 1, player.currentEquation.sol);
+    }
+
+    function getGhostY() {
+      let y = player.pos.y;
+      while (y < ROWS && !checkCollisionAt(player.pos.x, y + 1)) {
+        y++;
+      }
+      return y;
+    }
+
+    function checkCollisionAt(x, y, matrix = player.matrix) {
+      for (let r = 0; r < matrix.length; r++) {
+        for (let c = 0; c < matrix[r].length; c++) {
+          if (matrix[r][c] !== 0) {
+            const boardX = x + c;
+            const boardY = y + r;
+            if (
+              boardX < 0 ||
+              boardX >= COLS ||
+              boardY >= ROWS ||
+              (boardY >= 0 && board[boardY][boardX].value !== 0)
+            ) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+
+    function checkCollision() {
+      return checkCollisionAt(player.pos.x, player.pos.y);
+    }
+
+    function drawNextPiece() {
+      nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+      const matrix = PIECES[player.nextPiece];
+      const blockSize = 14;
+      const offsetX = (nextCanvas.width - matrix[0].length * blockSize) / 2;
+      const offsetY = (nextCanvas.height - matrix.length * blockSize) / 2;
+
+      for (let y = 0; y < matrix.length; y++) {
+        for (let x = 0; x < matrix[y].length; x++) {
+          if (matrix[y][x]) {
+            const colorIndex = Object.keys(PIECES).indexOf(player.nextPiece) + 1;
+            nextCtx.fillStyle = COLORS[colorIndex];
+            nextCtx.fillRect(offsetX + x * blockSize, offsetY + y * blockSize, blockSize, blockSize);
+            nextCtx.strokeRect(offsetX + x * blockSize, offsetY + y * blockSize, blockSize, blockSize);
+          }
+        }
+      }
+
+      document.getElementById('next-equation').textContent = player.nextEquation.eq;
+      document.getElementById('next-solution').textContent = `x = ${player.nextEquation.sol}`;
+    }
+
+    function merge() {
+      const colorIndex = Object.keys(PIECES).indexOf(player.piece) + 1;
+      for (let y = 0; y < player.matrix.length; y++) {
+        for (let x = 0; x < player.matrix[y].length; x++) {
+          if (player.matrix[y][x] !== 0) {
+            const boardY = player.pos.y + y;
+            const boardX = player.pos.x + x;
+            if (boardY >= 0) {
+              board[boardY][boardX] = {
+                value: colorIndex,
+                sol: player.currentEquation.sol,
+                pieceId: player.currentPieceId // ✅ Armazena o ID
+              };
+            }
+          }
+        }
+      }
+    }
+
+    function rotate(matrix) {
+      const N = matrix.length;
+      const result = Array.from({ length: N }, () => Array(N).fill(0));
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < matrix[y].length; x++) {
+          result[x][N - 1 - y] = matrix[y][x];
+        }
+      }
+      return result;
+    }
+
+    function playerRotate() {
+      const original = cloneMatrix(player.matrix);
+      const rotated = rotate(original);
+      player.matrix = rotated;
+
+      const kicks = [0, -1, 1, -2, 2];
+      let valid = false;
+      for (const dx of kicks) {
+        if (!checkCollisionAt(player.pos.x + dx, player.pos.y)) {
+          player.pos.x += dx;
+          valid = true;
+          break;
+        }
+      }
+
+      if (!valid) {
+        player.matrix = original;
+      }
+    }
+
+    function playerMove(dir) {
+      if (!checkCollisionAt(player.pos.x + dir, player.pos.y)) {
+        player.pos.x += dir;
+      }
+    }
+
+    function playerDrop() {
+      if (!checkCollisionAt(player.pos.x, player.pos.y + 1)) {
+        player.pos.y++;
+      } else {
+        merge();
+        checkAndRemoveTouching(); // ✅ Nova função segura
+        clearLines();
+        resetPlayer();
+        updateScore();
+      }
+      dropCounter = 0;
+    }
+
+    // ✅ Só remove se peças DIFERENTES com mesma solução se tocarem
+    function checkAndRemoveTouching() {
+      const toCheck = []; // células que fazem parte da peça atual
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          if (board[y][x].pieceId === player.currentPieceId) {
+            toCheck.push({ y, x });
+          }
+        }
+      }
+
+      const toRemove = new Set();
+
+      for (const { y, x } of toCheck) {
+        const sol = board[y][x].sol;
+        const currentId = board[y][x].pieceId;
+
+        // Verificar vizinhos
+        const directions = [[-1,0],[1,0],[0,-1],[0,1]];
+        for (const [dy, dx] of directions) {
+          const ny = y + dy;
+          const nx = x + dx;
+          if (
+            ny >= 0 && ny < ROWS &&
+            nx >= 0 && nx < COLS &&
+            board[ny][nx].value !== 0 &&
+            board[ny][nx].sol === sol &&
+            board[ny][nx].pieceId !== currentId // ✅ Só se ID diferente!
+          ) {
+            // Encontrou toque com peça diferente → marcar ambos para remoção
+            toRemove.add(`${y},${x}`);
+            toRemove.add(`${ny},${nx}`);
+          }
+        }
+      }
+
+      if (toRemove.size >= 2) {
+        let count = 0;
+        for (const key of toRemove) {
+          const [y, x] = key.split(',').map(Number);
+          board[y][x] = { value: 0, sol: null, pieceId: null };
+          count++;
+        }
+        score += count * 100;
+      }
+    }
+
+    function clearLines() {
+      let linesCleared = 0;
+      for (let y = ROWS - 1; y >= 0; y--) {
+        if (board[y].every(cell => cell.value !== 0)) {
+          board.splice(y, 1);
+          board.unshift(Array.from({ length: COLS }, () => ({ value: 0, sol: null, pieceId: null })));
+          linesCleared++;
+          y++;
+        }
+      }
+
+      if (linesCleared > 0) {
+        lines += linesCleared;
+        level = Math.floor(lines / 5) + 1;
+        dropInterval = Math.max(100, 1000 - (level - 1) * 100);
+        const points = [0, 40, 100, 300, 1200];
+        score += points[linesCleared] * level;
+      }
+    }
+
+    function updateScore() {
+      document.getElementById('score').textContent = `Pontos: ${score}`;
+      document.getElementById('level').textContent = `Nível: ${level}`;
+      document.getElementById('lines').textContent = `Linhas: ${lines}`;
+    }
+
+    function update(time = 0) {
+      if (gameOver) return;
+      const deltaTime = time - lastTime;
+      lastTime = time;
+      dropCounter += deltaTime;
+      if (dropCounter > dropInterval) {
+        playerDrop();
+      }
+      draw();
+      requestAnimationFrame(update);
+    }
+
+    function startGame() {
+      document.getElementById('game-over').style.display = 'none';
+      board = createBoard();
+      score = 0;
+      lines = 0;
+      level = 1;
+      dropInterval = 1000;
+      gameOver = false;
+      pieceIdCounter = 0;
+      player.nextPiece = null;
+      resetPlayer();
+      updateScore();
+      update();
+    }
+
+    document.addEventListener('keydown', e => {
+      if (gameOver) return;
+      switch (e.keyCode) {
+        case 37: playerMove(-1); break;
+        case 39: playerMove(1); break;
+        case 40: playerDrop(); break;
+        case 38: playerRotate(); break;
+      }
+    });
+
+    startGame();
+  </script>
+</body>
+</html>
